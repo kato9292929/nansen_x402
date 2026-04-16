@@ -77,7 +77,31 @@ x402 は HTTP の 402 ステータスコード（"Payment Required"）を拡張�
 
 ---
 
-## セットアップ
+## GitHub Codespaces で動かす（推奨）
+
+リポジトリページの **Code → Codespaces → Create codespace** を押すだけで環境が立ち上がります。
+
+```
+✓ Node.js 22 が自動セットアップ
+✓ npm install が自動実行
+✓ npm run dev が自動起動
+✓ ポート 3000 が自動フォワード → ブラウザでプレビュー表示
+```
+
+起動後にターミナルで環境変数を設定します：
+
+```bash
+cp .env.local.example .env.local
+# .env.local を編集して NANSEN_API_KEY と PAYMENT_RECIPIENT_ADDRESS を入力
+```
+
+> Codespaces の **Secrets**（リポジトリ設定 → Codespaces → Secrets）に登録しておくと、次回から自動で環境変数が入ります。
+
+> **API キーがなくても動きます。** モックデータで全機能を確認できます。
+
+---
+
+## ローカルセットアップ
 
 ### 1. リポジトリをクローン
 
@@ -86,6 +110,8 @@ git clone https://github.com/kato9292929/nansen_x402.git
 cd nansen_x402
 npm install
 ```
+
+> **Node.js 18 以上が必要です。** `node --version` で確認してください。
 
 ### 2. 環境変数を設定
 
