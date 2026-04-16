@@ -12,14 +12,18 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import {
-  TrendingUp,
   Wallet,
   Zap,
   CheckCircle,
   ExternalLink,
   AlertCircle,
+  LogOut,
 } from "lucide-react";
+import { useAccount, useConnect, useDisconnect, useWalletClient } from "wagmi";
+import { publicActions } from "viem";
+import { createPaymentHeader, selectPaymentRequirements } from "x402/client";
 import type { BacktestResult } from "@/lib/backtest";
+import type { PaymentRequirements } from "x402/types";
 
 type FlowStep = "idle" | "requesting" | "payment-required" | "paying" | "verifying" | "complete";
 
@@ -131,29 +135,63 @@ export default function Home() {
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const { address, isConnected } = useAccount();
+  const { connect, connectors } = useConnect();
+  const { disconnect } = useDisconnect();
+  const { data: walletClient } = useWalletClient();
+
   async function runBacktest() {
     setResult(null);
     setError(null);
     setFlowStep("requesting");
 
-    await delay(600);
-    setFlowStep("payment-required");
-    await delay(900);
-    setFlowStep("paying");
-    await delay(1200);
-    setFlowStep("verifying");
-
     try {
-      const res = await fetch(
-        `/api/backtest?investment=${investment}&days=${days}&chain=${chain}&strategy=${strategy}`
-      );
+      const url = `/api/backtest?investment=${investment}&days=${days}&chain=${chain}&strategy=${strategy}`;
+
+      // ① 最初のリクエスト
+      const res = await fetch(url);
 
       if (res.status === 402) {
-        const body = await res.json().catch(() => ({}));
-        setError(
-          `Payment required: connect a wallet to pay $0.10 USDC.\n\nSet PAYMENT_RECIPIENT_ADDRESS env var to enable payments.\n\n${JSON.stringify(body, null, 2)}`
-        );
-        setFlowStep("idle");
+        // ② 402受信 → 支払い要求をパース
+        const body = await res.json();
+        setFlowStep("payment-required");
+
+        if (!walletClient || !isConnected) {
+          setError("ウォレットを接続してから再度お試しください。");
+          setFlowStep("idle");
+          return;
+        }
+
+        const requirements: PaymentRequirements[] = body.accepts ?? [];
+        if (requirements.length === 0) {
+          setError("支払い情報が取得できませんでした。");
+          setFlowStep("idle");
+          return;
+        }
+
+        const selected = selectPaymentRequirements(requirements, "base-sepolia");
+
+        // ③ ウォレットで署名（EIP-3009 USDC authorization）
+        setFlowStep("paying");
+        const signer = walletClient.extend(publicActions);
+        const paymentHeader = await createPaymentHeader(signer, body.x402Version ?? 1, selected);
+
+        // ④ X-PAYMENT ヘッダーを付けてリトライ
+        setFlowStep("verifying");
+        const retryRes = await fetch(url, {
+          headers: { "X-PAYMENT": paymentHeader },
+        });
+
+        if (!retryRes.ok) {
+          const errBody = await retryRes.json().catch(() => ({ error: retryRes.statusText }));
+          setError((errBody as { error?: string }).error ?? retryRes.statusText);
+          setFlowStep("idle");
+          return;
+        }
+
+        const data: BacktestResult = await retryRes.json();
+        setFlowStep("complete");
+        setResult(data);
         return;
       }
 
@@ -164,6 +202,7 @@ export default function Home() {
         return;
       }
 
+      // PAYMENT_RECIPIENT_ADDRESS未設定の場合は直接200が返る（開発時）
       const data: BacktestResult = await res.json();
       setFlowStep("complete");
       setResult(data);
@@ -193,9 +232,37 @@ export default function Home() {
               <span className="text-gray-500 text-sm ml-2">powered by Nansen × x402</span>
             </div>
           </div>
-          <div className="flex items-center gap-2 text-xs bg-green-500/10 border border-green-500/30 text-green-400 px-3 py-1.5 rounded-full">
-            <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-            $0.10 USDC / query · No login required
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 text-xs bg-green-500/10 border border-green-500/30 text-green-400 px-3 py-1.5 rounded-full">
+              <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+              $0.10 USDC / query
+            </div>
+            {isConnected && address ? (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-400 font-mono hidden sm:block">
+                  {address.slice(0, 6)}…{address.slice(-4)}
+                </span>
+                <button
+                  onClick={() => disconnect()}
+                  className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 border border-gray-700 px-2 py-1.5 rounded-lg"
+                >
+                  <LogOut className="w-3 h-3" />
+                  切断
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                {connectors.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => connect({ connector: c })}
+                    className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg transition-colors"
+                  >
+                    {c.name === "Coinbase Wallet" ? "Coinbase Wallet" : c.name}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </header>
