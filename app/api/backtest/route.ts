@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { withX402 } from "x402-next";
+import { withX402 } from "@x402/next";
 import { getSmartMoneyWallets } from "@/lib/nansen";
 import { runBacktest } from "@/lib/backtest";
+import { server } from "@/lib/x402-server";
 import type { BacktestParams } from "@/lib/backtest";
-
-const PAYMENT_ADDRESS = (process.env.PAYMENT_RECIPIENT_ADDRESS ?? "0x0000000000000000000000000000000000000000") as `0x${string}`;
 
 async function handler(req: NextRequest): Promise<NextResponse> {
   const { searchParams } = new URL(req.url);
@@ -22,7 +21,6 @@ async function handler(req: NextRequest): Promise<NextResponse> {
 
   const wallets = await getSmartMoneyWallets(chain, 10);
 
-  // Extract tx hash from x402 payment header for the receipt
   const txHash = req.headers.get("x-payment-tx-hash") ?? `0x${Math.random().toString(16).slice(2)}${"0".repeat(56)}`;
 
   const result = runBacktest(wallets, { investmentUsd, days, chain, strategy }, txHash);
@@ -32,12 +30,15 @@ async function handler(req: NextRequest): Promise<NextResponse> {
 
 export const GET = withX402(
   handler,
-  PAYMENT_ADDRESS,
   {
-    price: "$0.10",
-    network: "base-sepolia",
-    config: {
-      description: "Nansen Smart Money Backtest — $0.10 USDC per query",
+    accepts: {
+      scheme: "exact",
+      price: "$0.10",
+      network: "eip155:84532",
+      payTo: process.env.WALLET_ADDRESS as `0x${string}`,
     },
-  }
+    description: "Nansen Smart Money Backtest - x402 micropayment",
+  },
+  server,
 );
+
